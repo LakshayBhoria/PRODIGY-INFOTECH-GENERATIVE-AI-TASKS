@@ -85,3 +85,6 @@ inputs = tokenizer(prompt, return_tensors="pt")
 outputs = model.generate(**inputs, max_length=50)
 
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+
+TASK 1 COMPLETED
+
