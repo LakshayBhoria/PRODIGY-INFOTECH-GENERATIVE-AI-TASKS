@@ -1,0 +1,97 @@
+
+print("TensorFlow version:", tf._version_)                                                                                                                                                                                           import tensorflow as tf
+from tensorflow.keras.layers import Input, Conv2D, Conv2DTranspose, LeakyReLU, BatchNormalization, ReLU, Concatenate
+from tensorflow.keras.models import Model
+import numpy as np
+import matplotlib.pyplot as plt
+def build_generator():
+    inputs = Input(shape=[256, 256, 3])
+    
+    # Encoder
+    c1 = Conv2D(64, (4, 4), strides=2, padding='same')(inputs)
+    c1 = LeakyReLU()(c1)
+    
+    c2 = Conv2D(128, (4, 4), strides=2, padding='same')(c1)
+    c2 = BatchNormalization()(c2)
+    c2 = LeakyReLU()(c2)
+    
+    c3 = Conv2D(256, (4, 4), strides=2, padding='same')(c2)
+    c3 = BatchNormalization()(c3)
+    c3 = LeakyReLU()(c3)
+    
+    # Bottleneck
+    b = Conv2D(512, (4, 4), strides=2, padding='same')(c3)
+    b = BatchNormalization()(b)
+    b = LeakyReLU()(b)
+    
+    # Decoder
+    u1 = Conv2DTranspose(256, (4, 4), strides=2, padding='same')(b)
+    u1 = BatchNormalization()(u1)
+    u1 = ReLU()(u1)
+    u1 = Concatenate()([u1, c3])
+    
+    u2 = Conv2DTranspose(128, (4, 4), strides=2, padding='same')(u1)
+    u2 = BatchNormalization()(u2)
+    u2 = ReLU()(u2)
+    u2 = Concatenate()([u2, c2])
+    
+    u3 = Conv2DTranspose(64, (4, 4), strides=2, padding='same')(u2)
+    u3 = BatchNormalization()(u3)
+    u3 = ReLU()(u3)
+    u3 = Concatenate()([u3, c1])
+    
+    outputs = Conv2D(3, (4, 4), activation='tanh', padding='same')(u3)
+    
+    return Model(inputs, outputs)
+def build_discriminator():
+    inputs = Input(shape=[256, 256, 3])
+    target = Input(shape=[256, 256, 3])
+    
+    x = Concatenate()([inputs, target])
+    
+    c1 = Conv2D(64, (4, 4), strides=2, padding='same')(x)
+    c1 = LeakyReLU()(c1)
+    
+    c2 = Conv2D(128, (4, 4), strides=2, padding='same')(c1)
+    c2 = BatchNormalization()(c2)
+    c2 = LeakyReLU()(c2)
+    
+    c3 = Conv2D(256, (4, 4), strides=2, padding='same')(c2)
+    c3 = BatchNormalization()(c3)
+    c3 = LeakyReLU()(c3)
+    
+    c4 = Conv2D(512, (4, 4), strides=2, padding='same')(c3)
+    c4 = BatchNormalization()(c4)
+    c4 = LeakyReLU()(c4)
+    
+    outputs = Conv2D(1, (4, 4), padding='same')(c4)
+    
+    return Model([inputs, target], outputs)
+def generator_loss(disc_generated_output, gen_output, target):
+    gen_loss = tf.reduce_mean(tf.abs(target - gen_output))
+    disc_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+        logits=disc_generated_output, labels=tf.ones_like(disc_generated_output)))
+    return gen_loss + disc_loss
+
+def discriminator_loss(disc_real_output, disc_generated_output):
+    real_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+        logits=disc_real_output, labels=tf.ones_like(disc_real_output)))
+    generated_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
+        logits=disc_generated_output, labels=tf.zeros_like(disc_generated_output)))
+    return real_loss + generated_loss
+    
+@tf.function
+def train_step(input_image, target, generator, discriminator, gen_optimizer, disc_optimizer):
+    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+        gen_output = generator(input_image, training=True)
+        disc_real_output = discriminator([input_image, target], training=True)
+        disc_generated_output = discriminator([input_image, gen_output], training=True)
+        
+        gen_loss = generator_loss(disc_generated_output, gen_output, target)
+        disc_loss = discriminator_loss(disc_real_output, disc_generated_output)
+    
+    gradients_of_generator = gen_tape.gradient(gen_loss, generator.trainable_variables)
+    gradients_of_discriminator = disc_tape.gradient(disc_loss, discriminator.trainable_variables)
+    
+    gen_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
+    disc_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
