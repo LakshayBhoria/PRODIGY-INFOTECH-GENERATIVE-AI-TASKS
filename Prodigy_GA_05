@@ -1,0 +1,123 @@
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import models, transforms
+from PIL import Image
+import matplotlib.pyplot as plt
+
+# Helper functions
+def load_image(image_path, max_size=400, shape=None):
+    image = Image.open(image_path).convert('RGB')
+    
+    if max_size:
+        size = max_size, max_size
+        image.thumbnail(size)
+    
+    if shape:
+        image = image.resize(shape)
+    
+    # Convert image to tensor
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.Lambda(lambda x: x.unsqueeze(0))
+    ])
+    
+    image = transform(image)
+    return image
+
+def imshow(tensor, title=None):
+    image = tensor.clone().detach().cpu().squeeze(0)
+    image = transforms.ToPILImage()(image)
+    
+    plt.imshow(image)
+    if title:
+        plt.title(title)
+    plt.show()
+
+# Define the VGG model with specified layers
+class VGGModel(nn.Module):
+    def __init__(self, style_layers, content_layers):
+        super(VGGModel, self).__init__()
+        self.model = models.vgg19(pretrained=True).features.eval()
+        
+        self.style_layers = style_layers
+        self.content_layers = content_layers
+    
+    def forward(self, x):
+        content_features = []
+        style_features = []
+        
+        for i, layer in enumerate(self.model.children()):
+            x = layer(x)
+            if i in self.content_layers:
+                content_features.append(x)
+            if i in self.style_layers:
+                style_features.append(x)
+        
+        return content_features, style_features
+
+def gram_matrix(tensor):
+    b, c, h, w = tensor.size()
+    features = tensor.view(b * c, h * w)
+    gram = torch.mm(features, features.t())
+    return gram / (c * h * w)
+
+def calculate_loss(content_weight, style_weight, content_features, style_features, target_content_features, target_style_features):
+    content_loss = torch.mean((content_features - target_content_features) ** 2)
+    style_loss = 0.0
+    
+    for sf, tf in zip(style_features, target_style_features):
+        style_loss += torch.mean((gram_matrix(sf) - gram_matrix(tf)) ** 2)
+    
+    total_loss = content_weight * content_loss + style_weight * style_loss
+    return total_loss
+
+def transfer_style(content_image, style_image, model, optimizer, num_steps=500):
+    target = content_image.clone().requires_grad_(True)
+    
+    content_weight = 1e5
+    style_weight = 1e10
+    
+    for step in range(num_steps):
+        optimizer.zero_grad()
+        
+        target_content_features, target_style_features = model(target)
+        content_features, style_features = model(content_image)
+        
+        loss = calculate_loss(content_weight, style_weight, content_features[0], style_features, target_content_features[0], target_style_features)
+        
+        loss.backward()
+        optimizer.step()
+        
+        if step % 50 == 0:
+            print(f"Step {step}, Loss: {loss.item()}")
+            imshow(target, title=f'Step {step}')
+    
+    return target
+
+# Load images
+content_image = load_image('/content/a.webp', shape=(400, 400))
+style_image = load_image('/content/b.jfif', shape=(400, 400))
+
+# Define style and content layers
+style_layers = [0, 5, 10, 19, 28]
+content_layers = [21]
+
+# Initialize VGG model
+model = VGGModel(style_layers, content_layers)
+
+# Initialize optimizer
+optimizer = optim.Adam([content_image.requires_grad_()], lr=0.003)
+
+# Perform style transfer
+output_image = transfer_style(content_image, style_image, model, optimizer)
+
+# Display final output
+imshow(output_image, title='Output Image')
+
+# Save the output image
+output_image = output_image.squeeze(0).cpu().detach()
+output_image = transforms.ToPILImage()(output_image)
+output_image.save('output_image.jpg')
